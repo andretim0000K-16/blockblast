@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import FeedbackForm from './components/FeedbackForm';
 
 const SIZE = 8;
 const COLORS = ['#ff6b6b', '#feca57', '#48dbfb', '#1dd1a1', '#ff9ff3', '#f368e0', '#54a0ff', '#ff9f43'];
@@ -532,6 +533,16 @@ export default function App() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* Feedback Form Section */}
+      <section className="max-w-lg mx-auto px-4 pb-8">
+        <FeedbackForm
+          onSubmit={(data) => {
+            console.log('Feedback submitted:', data);
+            // Здесь можно добавить реальную отправку на сервер
+          }}
+        />
       </section>
 
       {/* Footer */}
