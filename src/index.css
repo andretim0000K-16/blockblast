@@ -116,3 +116,22 @@ html, body {
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
+
+/* Google Form iframe styling */
+iframe[src*="docs.google.com/forms"] {
+  background: #ffffff;
+  border-radius: 12px;
+}
+
+/* Hide Google Forms header to save space */
+iframe[src*="docs.google.com/forms"] {
+  margin-top: 0;
+}
+
+/* Form container responsive */
+@media (max-width: 500px) {
+  iframe[src*="docs.google.com/forms"] {
+    min-height: 650px;
+    height: 700px;
+  }
+}
