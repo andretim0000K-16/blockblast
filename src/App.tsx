@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import FeedbackForm from './components/FeedbackForm';
 
 const SIZE = 8;
 const COLORS = ['#ff6b6b', '#feca57', '#48dbfb', '#1dd1a1', '#ff9ff3', '#f368e0', '#54a0ff', '#ff9f43'];
@@ -535,14 +534,63 @@ export default function App() {
         </div>
       </section>
 
-      {/* Feedback Form Section */}
+      {/* Feedback Section */}
       <section className="max-w-lg mx-auto px-4 pb-8">
-        <FeedbackForm
-          onSubmit={(data) => {
-            console.log('Feedback submitted:', data);
-            // Здесь можно добавить реальную отправку на сервер
-          }}
-        />
+        <div className="bg-black/30 rounded-3xl border border-white/10 p-6 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.5)] text-center">
+          <div className="text-4xl mb-3">💬</div>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-2">
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage: 'linear-gradient(90deg, #48dbfb, #1dd1a1)',
+              }}
+            >
+              Обратная связь
+            </span>
+          </h2>
+          <p className="text-gray-400 text-sm mb-6 max-w-md mx-auto">
+            Есть вопросы, предложения или нашли ошибку? Поделитесь своим мнением — мы читаем каждое сообщение!
+          </p>
+          <a
+            href="https://forms.gle/ZvMvkhD6pXpy2Rem8"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 py-3 px-8 bg-gradient-to-r from-[#48dbfb] to-[#1dd1a1] rounded-xl text-white font-bold text-lg hover:scale-105 active:scale-95 transition-transform cursor-pointer shadow-lg"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
+            </svg>
+            Оставить отзыв
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+              />
+            </svg>
+          </a>
+          <p className="text-gray-500 text-xs mt-4">
+            Откроется форма Google Forms в новой вкладке
+          </p>
+        </div>
       </section>
 
       {/* Footer */}
