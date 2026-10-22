@@ -13,6 +13,24 @@ interface Piece {
   used: boolean;
 }
 
+type ModeId = 'classic' | 'zen' | 'timeattack' | 'marathon';
+
+interface ModeDef {
+  id: ModeId;
+  icon: string;
+  label: string;
+  desc: string;
+  timeLimit?: number; // seconds
+  dailyGoal?: number; // lines to clear
+}
+
+const MODES: ModeDef[] = [
+  { id: 'classic', icon: '🎮', label: 'Классика', desc: 'Собирай линии, бей рекорды. Одна ошибка — конец игры.' },
+  { id: 'zen', icon: '🧘', label: 'Дзен', desc: 'Без таймеров и поражений. Чистая медитация.' },
+  { id: 'timeattack', icon: '⏱️', label: 'Гонка на время', desc: '2 минуты на борту. Рекорд считается в каждом режиме!', timeLimit: 120 },
+  { id: 'marathon', icon: '🏃', label: 'Марафон', desc: 'Цель: 15 линий за игру. Уложись в 4 минуты!', timeLimit: 240, dailyGoal: 15 },
+];
+
 const SHAPES: Shape[] = [
   [[1]],
   [[1, 1]],
@@ -103,14 +121,23 @@ function findClearableCells(board: Board): Set<string> {
   return toClear;
 }
 
+function fmtTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export default function App() {
+  const [mode, setMode] = useState<ModeId>('classic');
   const [board, setBoard] = useState<Board>(createEmptyBoard);
   const [score, setScore] = useState(0);
-  const [best, setBest] = useState(() => +(localStorage.getItem('bb_best') || 0));
+  const [best, setBest] = useState(() => +(localStorage.getItem('bb_best_classic') || 0));
+  const [newRecords, setNewRecords] = useState(() => +(localStorage.getItem('bb_records_count') || 0));
   const [linesCount, setLinesCount] = useState(0);
   const [pieces, setPieces] = useState<Piece[]>(spawnPieces);
   const [clearingCells, setClearingCells] = useState<Set<string>>(new Set());
   const [gameOver, setGameOver] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [previewCells, setPreviewCells] = useState<{ cells: Set<string>; valid: boolean; row: number; col: number }>({
     cells: new Set(),
     valid: false,
@@ -122,39 +149,142 @@ export default function App() {
   const [combo, setCombo] = useState(0);
   const [showCombo, setShowCombo] = useState(false);
   const [scorePopup, setScorePopup] = useState<{ value: number; key: number } | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [goalReached, setGoalReached] = useState(false);
+  const [recordFlash, setRecordFlash] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const popupKey = useRef(0);
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const recordShownRef = useRef(false);
 
-  // Update best score
+  const modeDef = MODES.find((m) => m.id === mode)!;
+  const bestKey = `bb_best_${mode}`;
+
+  // Update best score & count NEW RECORDS
   useEffect(() => {
-    if (score > best) {
+    if (score > 0 && score > best) {
       setBest(score);
-      localStorage.setItem('bb_best', String(score));
+      localStorage.setItem(bestKey, String(score));
+      if (!recordShownRef.current) {
+        recordShownRef.current = true;
+        setNewRecords((n) => {
+          const next = n + 1;
+          localStorage.setItem('bb_records_count', String(next));
+          return next;
+        });
+        setRecordFlash(true);
+        setTimeout(() => setRecordFlash(false), 2500);
+      }
     }
-  }, [score, best]);
+  }, [score, best, bestKey]);
 
-  // Check game over when pieces change
+  // Reset "record already shown" flag on restart / mode change
   useEffect(() => {
+    recordShownRef.current = false;
+  }, [mode]);
+
+  // Timers: countdown (time attack) and stopwatch (other modes)
+  useEffect(() => {
+    if (paused || gameOver) return;
+    const interval = setInterval(() => {
+      setElapsed((e) => e + 1);
+      if (modeDef.timeLimit) {
+        setTimeLeft((t) => {
+          if (t === null) return t;
+          if (t <= 1) {
+            clearInterval(interval);
+            setGameOver(true);
+            return 0;
+          }
+          return t - 1;
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [paused, gameOver, modeDef.timeLimit, mode]);
+
+  // Check game over when pieces/board change (not in Zen — pieces reroll instead)
+  useEffect(() => {
+    if (gameOver || paused) return;
     const remaining = pieces.filter((p) => !p.used);
     if (remaining.length === 0) return;
     const anyCanPlace = remaining.some((p) => canPlaceAnywhere(board, p));
     if (!anyCanPlace) {
-      setGameOver(true);
+      if (mode === 'zen') {
+        // In Zen mode pieces never end the game — just reroll them
+        setPieces(spawnPieces());
+      } else {
+        setGameOver(true);
+      }
     }
-  }, [pieces, board]);
+  }, [pieces, board, gameOver, paused, mode]);
 
-  const restartGame = useCallback(() => {
+  // Marathon: goal reached?
+  useEffect(() => {
+    if (modeDef.dailyGoal && linesCount >= modeDef.dailyGoal && !goalReached) {
+      setGoalReached(true);
+      setScore((s) => s + 200);
+      popupKey.current += 1;
+      setScorePopup({ value: 200, key: popupKey.current });
+      setTimeout(() => setScorePopup(null), 1200);
+    }
+  }, [linesCount, modeDef, goalReached]);
+
+  const startGame = useCallback((m: ModeId) => {
+    const def = MODES.find((x) => x.id === m)!;
+    setMode(m);
     setBoard(createEmptyBoard());
     setScore(0);
     setLinesCount(0);
     setPieces(spawnPieces());
     setGameOver(false);
+    setPaused(false);
     setClearingCells(new Set());
     setCombo(0);
     setScorePopup(null);
+    setElapsed(0);
+    setGoalReached(false);
+    setTimeLeft(def.timeLimit ? def.timeLimit : null);
+    setPreviewCells({ cells: new Set(), valid: false, row: -1, col: -1 });
+    setDragPieceIdx(null);
+    setDragPos(null);
+    recordShownRef.current = false;
+    setBest(+(localStorage.getItem(`bb_best_${m}`) || 0));
   }, []);
+
+  const restartGame = useCallback(() => {
+    startGame(mode);
+  }, [mode, startGame]);
+
+  const togglePause = useCallback(() => {
+    if (gameOver) return;
+    setPaused((p) => {
+      const next = !p;
+      if (next) {
+        // cancel any active drag when pausing
+        setDragPieceIdx(null);
+        setDragPos(null);
+        setPreviewCells({ cells: new Set(), valid: false, row: -1, col: -1 });
+      }
+      return next;
+    });
+  }, [gameOver]);
+
+  // Space / P hotkeys for pause
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.key.toLowerCase() === 'p' || e.key.toLowerCase() === 'з') {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'IFRAME') return;
+        e.preventDefault();
+        togglePause();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [togglePause]);
 
   const handlePlace = useCallback(
     (pieceIdx: number, r: number, c: number) => {
@@ -317,16 +447,34 @@ export default function App() {
   const handlePointerDown = useCallback(
     (e: React.PointerEvent, idx: number) => {
       e.preventDefault();
+      if (paused || gameOver) return;
       const piece = pieces[idx];
       if (piece.used) return;
 
       setDragPieceIdx(idx);
       setDragPos({ x: e.clientX, y: e.clientY });
     },
-    [pieces]
+    [pieces, paused, gameOver]
   );
 
   const dragPiece = dragPieceIdx !== null ? pieces[dragPieceIdx] : null;
+
+  // Measure the board so the dragged piece renders at EXACTLY board-cell size (no shrinking)
+  const [boardPx, setBoardPx] = useState(0);
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    const update = () => setBoardPx(el.getBoundingClientRect().width);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const boardPadding = 8;
+  const boardGap = 3;
+  const cellPx = boardPx > 0 ? (boardPx - boardPadding * 2 - boardGap * (SIZE - 1)) / SIZE : 36;
+  const dragOffsetY = cellPx * 2; // piece floats above the cursor, matching the preview offset
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] text-white overflow-x-hidden select-none">
@@ -362,22 +510,58 @@ export default function App() {
         </div>
       </section>
 
+      {/* Game Modes */}
+      <section className="max-w-lg mx-auto px-4 pb-4">
+        <h2 className="text-center text-sm uppercase tracking-widest text-[#b8b8d4] mb-3">Выбери режим</h2>
+        <div className="grid grid-cols-2 gap-2">
+          {MODES.map((m) => {
+            const active = m.id === mode;
+            const modeBest = +(localStorage.getItem(`bb_best_${m.id}`) || 0);
+            return (
+              <button
+                key={m.id}
+                onClick={() => startGame(m.id)}
+                className={`text-left p-3 rounded-2xl border transition-all cursor-pointer ${
+                  active
+                    ? 'bg-white/[0.12] border-[#48dbfb]/60 shadow-[0_0_15px_rgba(72,219,251,0.25)] scale-[1.02]'
+                    : 'bg-white/[0.04] border-white/10 hover:bg-white/[0.08] hover:scale-[1.02]'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">{m.icon}</span>
+                  <span className={`font-bold text-sm ${active ? 'text-[#48dbfb]' : 'text-white'}`}>{m.label}</span>
+                  {active && <span className="ml-auto text-[10px] bg-[#48dbfb]/20 text-[#48dbfb] px-2 py-0.5 rounded-full">активен</span>}
+                </div>
+                <p className="text-[11px] text-gray-400 leading-snug mb-1">{m.desc}</p>
+                <p className="text-[10px] text-[#feca57]">🏆 Рекорд режима: {modeBest}</p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       {/* Game Container */}
       <section className="max-w-lg mx-auto px-4 pb-8">
-        <div className="bg-black/30 rounded-3xl border border-white/10 p-4 sm:p-5 shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
+        <div className="bg-black/30 rounded-3xl border border-white/10 p-4 sm:p-5 shadow-[0_20px_60px_rgba(0,0,0,0.5)] relative">
           {/* Score Bar */}
           <div className="flex justify-between mb-4 gap-2 relative">
             <div className="bg-white/[0.08] px-3 py-2 rounded-xl text-center flex-1">
               <small className="block text-[#b8b8d4] text-[10px] uppercase tracking-wider">Счёт</small>
               <strong className="text-xl sm:text-2xl text-[#feca57]">{score}</strong>
             </div>
-            <div className="bg-white/[0.08] px-3 py-2 rounded-xl text-center flex-1">
+            <div className="bg-white/[0.08] px-3 py-2 rounded-xl text-center flex-1 relative overflow-hidden">
               <small className="block text-[#b8b8d4] text-[10px] uppercase tracking-wider">Рекорд</small>
-              <strong className="text-xl sm:text-2xl text-[#feca57]">{best}</strong>
+              <strong className={`text-xl sm:text-2xl ${recordFlash ? 'text-[#1dd1a1]' : 'text-[#feca57]'}`}>{best}</strong>
+              {recordFlash && (
+                <span
+                  className="absolute inset-0 pointer-events-none rounded-xl"
+                  style={{ animation: 'recordGlow 2.5s ease-out forwards', boxShadow: '0 0 0 2px rgba(29,209,161,0.7)' }}
+                />
+              )}
             </div>
             <div className="bg-white/[0.08] px-3 py-2 rounded-xl text-center flex-1">
-              <small className="block text-[#b8b8d4] text-[10px] uppercase tracking-wider">Линий</small>
-              <strong className="text-xl sm:text-2xl text-[#feca57]">{linesCount}</strong>
+              <small className="block text-[#b8b8d4] text-[10px] uppercase tracking-wider">Новых рекордов</small>
+              <strong className="text-xl sm:text-2xl text-[#1dd1a1]">🏆 {newRecords}</strong>
             </div>
 
             {/* Score popup */}
@@ -392,6 +576,32 @@ export default function App() {
             )}
           </div>
 
+          {/* Timer / Goal bar */}
+          {(modeDef.timeLimit || modeDef.dailyGoal) && (
+            <div className="flex items-center justify-between gap-3 mb-3 px-1">
+              {modeDef.timeLimit ? (
+                <div className={`flex items-center gap-2 font-mono text-lg font-bold ${timeLeft !== null && timeLeft <= 15 ? 'text-[#ff6b6b] animate-pulse' : 'text-[#48dbfb]'}`}>
+                  ⏱ {fmtTime(timeLeft ?? modeDef.timeLimit)}
+                </div>
+              ) : (
+                <div className="text-sm text-[#b8b8d4]">⏳ Время: <span className="font-mono text-white">{fmtTime(elapsed)}</span></div>
+              )}
+              {modeDef.dailyGoal && (
+                <div className="flex-1 max-w-[180px]">
+                  <div className="text-[10px] uppercase tracking-wider text-[#b8b8d4] mb-1 text-right">
+                    Цель: {Math.min(linesCount, modeDef.dailyGoal)}/{modeDef.dailyGoal} линий {goalReached && '✅'}
+                  </div>
+                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#48dbfb] to-[#1dd1a1] transition-all duration-500"
+                      style={{ width: `${Math.min(100, (linesCount / modeDef.dailyGoal) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Combo indicator */}
           {showCombo && combo > 1 && (
             <div className="text-center mb-2">
@@ -403,6 +613,29 @@ export default function App() {
               </span>
             </div>
           )}
+
+          {/* Control buttons: pause / restart */}
+          <div className="flex justify-center gap-2 mb-3">
+            <button
+              onClick={togglePause}
+              disabled={gameOver}
+              className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+                gameOver
+                  ? 'opacity-40 cursor-not-allowed bg-white/5'
+                  : paused
+                    ? 'bg-gradient-to-r from-[#1dd1a1] to-[#48dbfb] text-black hover:scale-105 active:scale-95'
+                    : 'bg-white/10 hover:bg-white/20 border border-white/10'
+              }`}
+            >
+              {paused ? '▶ Продолжить' : '⏸ Пауза'}
+            </button>
+            <button
+              onClick={restartGame}
+              className="px-4 py-2 rounded-xl font-semibold text-sm bg-white/10 hover:bg-white/20 border border-white/10 transition-all cursor-pointer active:scale-95"
+            >
+              🔄 Заново
+            </button>
+          </div>
 
           {/* Game Board */}
           <div
@@ -442,6 +675,25 @@ export default function App() {
                 );
               })
             )}
+
+            {/* Pause overlay on the board */}
+            {paused && !gameOver && (
+              <div
+                className="absolute inset-0 z-30 rounded-2xl bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center gap-3"
+                style={{ animation: 'fadeIn 0.3s ease-out' }}
+              >
+                <div className="text-5xl">⏸</div>
+                <div className="text-2xl font-bold text-[#48dbfb]">Пауза</div>
+                <div className="text-sm text-gray-300">Игра остановлена — таймер тоже</div>
+                <button
+                  onClick={togglePause}
+                  className="mt-2 px-8 py-3 bg-gradient-to-r from-[#1dd1a1] to-[#48dbfb] rounded-full text-black font-bold text-lg hover:scale-105 active:scale-95 transition-transform cursor-pointer shadow-lg"
+                >
+                  ▶ Продолжить
+                </button>
+                <div className="text-xs text-gray-500">или клавиша Пробел / P</div>
+              </div>
+            )}
           </div>
 
           {/* Pieces Panel */}
@@ -454,8 +706,8 @@ export default function App() {
               return (
                 <div
                   key={idx}
-                  className={`cursor-grab active:cursor-grabbing transition-all duration-200 p-1.5 sm:p-2 rounded-xl
-                    ${isDragging ? 'opacity-20 scale-75' : 'hover:scale-110 active:scale-95'}
+                  className={`cursor-grab active:cursor-grabbing transition-all duration-200 p-1.5 sm:p-2 rounded-xl touch-none
+                    ${isDragging ? 'opacity-20' : 'hover:scale-110'}
                   `}
                   style={{
                     display: 'grid',
@@ -481,29 +733,30 @@ export default function App() {
             })}
           </div>
 
-          {/* Dragging piece overlay */}
-          {dragPiece && dragPos && (
+          {/* Dragging piece overlay — rendered at EXACT board cell size so it never shrinks */}
+          {dragPiece && dragPos && !paused && (
             <div
               className="fixed pointer-events-none z-50"
               style={{
-                left: dragPos.x - (dragPiece.shape[0].length * 26) / 2,
-                top: dragPos.y - 90,
+                left: dragPos.x - (dragPiece.shape[0].length * (cellPx + boardGap)) / 2 + boardGap / 2,
+                top: dragPos.y - dragOffsetY - (dragPiece.shape.length * (cellPx + boardGap)) / 2 + boardGap / 2,
                 display: 'grid',
-                gridTemplateColumns: `repeat(${dragPiece.shape[0].length}, 1fr)`,
-                gap: '3px',
+                gridTemplateColumns: `repeat(${dragPiece.shape[0].length}, ${cellPx}px)`,
+                gridAutoRows: `${cellPx}px`,
+                gap: `${boardGap}px`,
               }}
             >
               {dragPiece.shape.map((row, dr) =>
                 row.map((v, dc) => (
                   <div
                     key={`${dr}-${dc}`}
-                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-[4px]"
+                    className="rounded-[4px]"
                     style={{
                       background: v ? dragPiece.color : 'transparent',
                       boxShadow: v
-                        ? `inset 0 0 8px rgba(255,255,255,0.4), 0 0 15px ${dragPiece.color}`
+                        ? `inset 0 0 10px rgba(255,255,255,0.4), 0 0 15px ${dragPiece.color}`
                         : 'none',
-                      opacity: v ? 0.9 : 0,
+                      opacity: v ? 0.95 : 0,
                     }}
                   />
                 ))
@@ -517,12 +770,24 @@ export default function App() {
               className="text-center p-5 bg-red-500/20 rounded-2xl mt-4"
               style={{ animation: 'fadeIn 0.5s ease-out' }}
             >
-              <h2 className="text-2xl font-bold mb-2">💥 Игра окончена!</h2>
+              <h2 className="text-2xl font-bold mb-2">
+                💥 Игра окончена!
+                {modeDef.timeLimit && <span className="block text-sm font-normal text-gray-300 mt-1">Время вышло ⏱</span>}
+              </h2>
               <p className="text-lg mb-1">
                 Ваш счёт: <span className="text-[#feca57] font-bold text-xl">{score}</span>
               </p>
+              <p className="text-sm text-gray-300 mb-1">
+                Линий собрано: <span className="font-bold">{linesCount}</span>
+                {modeDef.dailyGoal && (
+                  <>
+                    {' '}
+                    / цель {modeDef.dailyGoal} {goalReached ? '✅' : '❌'}
+                  </>
+                )}
+              </p>
               {score >= best && score > 0 && (
-                <p className="text-[#1dd1a1] font-semibold mb-3">🎉 Новый рекорд!</p>
+                <p className="text-[#1dd1a1] font-semibold mb-3">🎉 Новый рекорд! Всего новых рекордов: {newRecords}</p>
               )}
               <button
                 onClick={restartGame}
@@ -553,7 +818,7 @@ export default function App() {
             <p className="text-gray-400 text-sm max-w-md mx-auto mb-4">
               Есть вопросы, предложения или нашли ошибку? Поделитесь своим мнением!
             </p>
-            
+
             {/* Toggle Button */}
             <button
               onClick={() => setIsFormOpen(!isFormOpen)}
@@ -612,6 +877,18 @@ export default function App() {
                 Загрузка…
               </iframe>
             </div>
+
+            <p className="text-center text-gray-400 text-xs mt-3">
+              Не видно форму?{' '}
+              <a
+                href="https://docs.google.com/forms/d/e/1FAIpQLSfvjKKFakcGvGHes5p9SRr_SMdrS6aFxCGR43h2BAajgTs8hA/viewform?usp=sending_link"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#48dbfb] underline hover:text-[#1dd1a1]"
+              >
+                Открыть форму обратной связи в новой вкладке →
+              </a>
+            </p>
 
             <p className="text-center text-gray-500 text-xs mt-3">
               Форма защищена Google. Ваши данные в безопасности 🔒
